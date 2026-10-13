@@ -1,0 +1,10 @@
+# Datos locales (BD SQLite + fotos subidas) — no se versionan
+data/
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Misc
+*.log
+.DS_Store
