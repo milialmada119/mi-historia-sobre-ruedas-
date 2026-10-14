@@ -2,7 +2,8 @@
 import { api } from "./api.js";
 import { formModal } from "./ui.js";
 import { CATEGORIES, SECTIONS, sectionLabel } from "./components.js";
-import { toast } from "./utils.js";
+import { toast, h } from "./utils.js";
+import { icon } from "./icons.js";
 import { navigate, refresh, openCar } from "./router.js";
 
 const sectionOptions = Object.entries(SECTIONS).map(([value, def]) => ({ value, label: def.label }));
@@ -10,6 +11,7 @@ const categoryOptions = Object.entries(CATEGORIES).map(([value, def]) => ({ valu
 
 export async function openCarForm(car = null) {
   const editing = Boolean(car);
+  const vin = vinLookup();
   return formModal({
     title: editing ? "Editar ficha del auto" : "Sumar un auto a mi historia",
     subtitle: editing
@@ -18,6 +20,7 @@ export async function openCarForm(car = null) {
     submitLabel: editing ? "Guardar cambios" : "Sumar a mi colección",
     size: "wide",
     fields: [
+      { type: "static", node: vin.node },
       { name: "brand", label: "Marca", type: "text", value: car?.brand, required: true, half: true, placeholder: "Ford, Volkswagen…" },
       { name: "model", label: "Modelo", type: "text", value: car?.model, required: true, half: true, placeholder: "Mustang, Golf…" },
       { name: "year", label: "Año de fabricación", type: "number", value: car?.year, half: true, min: 1886, max: 2100, placeholder: "1987" },
@@ -43,6 +46,7 @@ export async function openCarForm(car = null) {
       { name: "favorite", label: "Auto destacado", type: "switch", value: car?.favorite,
         hint: "Marcalo para tenerlo siempre a mano entre tus favoritos." },
     ],
+    onReady: ({ set }) => vin.wire(set),
     onSubmit: async (values) => {
       if (editing) {
         await api.updateCar(car.id, values);
@@ -55,6 +59,59 @@ export async function openCarForm(car = null) {
       }
     },
   });
+}
+
+/**
+ * Widget opcional para completar la ficha a partir del VIN.
+ * Consulta la API pública de la NHTSA (sin API key): el navegador pide a nuestro
+ * backend y el backend hace la consulta externa, así el frontend nunca ve secretos.
+ */
+function vinLookup() {
+  const input = h("input", {
+    class: "input", placeholder: "Ej: 1HGCM82633A004352", maxlength: "17",
+    autocapitalize: "characters", autocomplete: "off", spellcheck: "false",
+    style: { textTransform: "uppercase", fontFamily: "ui-monospace, SFMono-Regular, monospace", letterSpacing: "0.06em" },
+  });
+  const button = h("button", { class: "btn btn-ghost", type: "button" }, icon("search"), "Buscar datos");
+  const status = h("div", { class: "hint vin-status" });
+  const node = h("div", { class: "field vin-field" },
+    h("label", {}, "Completar por VIN (opcional)"),
+    h("div", { class: "vin-row" }, input, button),
+    h("div", { class: "hint" },
+      "Ingresá el VIN (17 caracteres) y completamos marca, modelo y año. Lo encontrás en la cédula del auto o en el parabrisas."),
+    status);
+
+  let applyValue = () => {};
+  const say = (text, kind = "") => { status.textContent = text; status.className = `hint vin-status ${kind}`.trim(); };
+
+  async function search() {
+    const vin = input.value.trim().toUpperCase();
+    if (!vin) { say("Escribí el VIN para buscarlo.", "err"); input.focus(); return; }
+    button.disabled = true;
+    button.replaceChildren(icon("search"), "Buscando…");
+    say("Consultando el registro de VIN…");
+    try {
+      const data = await api.decodeVin(vin);
+      if (data.brand) applyValue("brand", data.brand);
+      if (data.model) applyValue("model", data.model);
+      if (data.year) applyValue("year", data.year);
+      const found = [data.brand, data.model, data.year].filter(Boolean).join(" ");
+      const extra = [data.trim, data.body, data.engine].filter(Boolean).join(" · ");
+      say(`✓ ${found}${extra ? ` — ${extra}` : ""}`, "ok");
+    } catch (err) {
+      say(err.message || "No pudimos consultar ese VIN.", "err");
+    } finally {
+      button.disabled = false;
+      button.replaceChildren(icon("search"), "Buscar datos");
+    }
+  }
+
+  button.addEventListener("click", search);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); search(); }
+  });
+
+  return { node, wire: (set) => { applyValue = set; } };
 }
 
 export async function openModForm(carId, mod = null) {

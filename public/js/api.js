@@ -60,4 +60,7 @@ export const api = {
   featured: (limit = 24) => request(`/api/memories/featured?limit=${limit}`),
   memoryToday: () => request("/api/memories/today"),
   stats: () => request("/api/stats"),
+
+  // Servicios externos
+  decodeVin: (vin) => request(`/api/vin?vin=${encodeURIComponent(vin)}`),
 };

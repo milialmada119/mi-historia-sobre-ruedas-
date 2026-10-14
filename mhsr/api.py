@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import os
 import re
 import secrets
+import socket
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timezone
 
 from . import auth, db
@@ -960,6 +964,90 @@ def stats(ctx):
         "categories": cat_rows,
         "years_span": None,
     }
+
+
+# --------------------------------------------------------------------------- #
+#  Servicios externos (VIN)
+# --------------------------------------------------------------------------- #
+
+VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
+NHTSA_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json"
+
+
+def _decode_vin(vin: str) -> dict:
+    """Consulta la API pública de la NHTSA (sin API key) y normaliza la respuesta."""
+    url = NHTSA_URL.format(vin=vin)
+    req = urllib.request.Request(url, headers={"User-Agent": "MiHistoriaSobreRuedas/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            payload = json.loads(resp.read().decode("utf-8", "replace"))
+    except socket.timeout:
+        raise HttpError(504, "La consulta al registro de VIN tardó demasiado. Probá de nuevo.")
+    except (urllib.error.URLError, ValueError, OSError):
+        raise HttpError(502, "No pudimos consultar el registro de VIN en este momento.")
+
+    results = payload.get("Results") or []
+    if not results:
+        raise HttpError(404, "No encontramos datos para ese VIN.")
+    r = results[0]
+
+    def g(key: str) -> str:
+        value = r.get(key)
+        return value.strip() if isinstance(value, str) else ""
+
+    make = g("Make")
+    model = g("Model")
+    try:
+        error_code = int(g("ErrorCode") or "0")
+    except ValueError:
+        error_code = 0
+
+    if not make and not model:
+        raise HttpError(404, "Ese VIN no corresponde a un vehículo conocido.")
+
+    year_raw = g("ModelYear")
+    year = int(year_raw) if year_raw.isdigit() else None
+
+    # Arma un resumen de motor legible, si hay datos.
+    engine_bits = []
+    if g("DisplacementL"):
+        try:
+            engine_bits.append(f"{float(g('DisplacementL')):.1f}L")
+        except ValueError:
+            pass
+    if g("EngineCylinders"):
+        engine_bits.append(f"{g('EngineCylinders')} cil.")
+    if g("FuelTypePrimary"):
+        engine_bits.append(g("FuelTypePrimary"))
+
+    return {
+        "vin": vin,
+        "found": error_code == 0,
+        "brand": make.title() if make else "",
+        "model": model,
+        "year": year,
+        "series": g("Series"),
+        "trim": g("Trim"),
+        "body": g("BodyClass"),
+        "type": g("VehicleType"),
+        "engine": " · ".join(engine_bits),
+        "drive": g("DriveType"),
+        "plant": g("PlantCountry"),
+        "note": g("ErrorText"),
+    }
+
+
+@route("GET", r"/api/vin")
+def decode_vin(ctx):
+    vin = re.sub(r"\s+", "", (ctx.query.get("vin") or "")).upper()
+    if not vin:
+        raise HttpError(400, "Escribí un VIN para consultar.")
+    if not VIN_RE.match(vin):
+        raise HttpError(
+            400,
+            "El VIN debe tener 17 caracteres (letras y números, sin I, O ni Q).",
+        )
+    return _decode_vin(vin)
 
 
 # --------------------------------------------------------------------------- #

@@ -96,7 +96,7 @@ export function imagePicker({ multiple = false, value = null, hint = "" } = {}) 
  */
 export function formModal({
   title, subtitle, fields = [], submitLabel = "Guardar", size = "",
-  onSubmit, extraFoot = null, intro = null,
+  onSubmit, extraFoot = null, intro = null, onReady = null,
 }) {
   const controls = new Map();
   const body = h("div", {});
@@ -139,6 +139,16 @@ export function formModal({
 
   const form = h("form", { onsubmit: (e) => { e.preventDefault(); submit(); } }, body);
   const ref = openModal({ title, subtitle, content: form, footer, size });
+
+  // Permite a quien arma el formulario leer/completar campos una vez construidos.
+  if (onReady) {
+    onReady({
+      get: (name) => { const c = controls.get(name); return c ? c.get() : undefined; },
+      set: (name, value) => { const c = controls.get(name); if (c && c.set) c.set(value); },
+      controls,
+      close: ref.close,
+    });
+  }
 
   function collect() {
     const values = {};
@@ -183,7 +193,7 @@ function buildControl(def) {
     case "textarea": {
       const input = h("textarea", { class: "textarea", placeholder: def.placeholder || "", rows: def.rows || 4 });
       input.value = value || "";
-      return { node: input, get: () => input.value.trim() || null };
+      return { node: input, get: () => input.value.trim() || null, set: (v) => { input.value = v ?? ""; } };
     }
     case "select": {
       const input = h("select", { class: "select" });
@@ -192,7 +202,7 @@ function buildControl(def) {
         if (String(opt.value) === String(value)) option.selected = true;
         input.appendChild(option);
       }
-      return { node: input, get: () => input.value || null };
+      return { node: input, get: () => input.value || null, set: (v) => { input.value = v ?? ""; } };
     }
     case "switch": {
       const input = h("input", { type: "checkbox" });
@@ -200,7 +210,7 @@ function buildControl(def) {
       const node = h("div", { class: "switch-row" },
         h("div", { class: "txt" }, h("b", {}, def.label), def.hint ? h("span", {}, def.hint) : null),
         h("label", { class: "switch" }, input, h("span", { class: "track" })));
-      return { node, get: () => input.checked };
+      return { node, get: () => input.checked, set: (v) => { input.checked = Boolean(v); } };
     }
     case "photo":
     case "photos": {
@@ -213,15 +223,15 @@ function buildControl(def) {
     }
     case "number": {
       const input = h("input", { class: "input", type: "number", value: value || "", placeholder: def.placeholder || "", min: def.min, max: def.max });
-      return { node: input, get: () => (input.value === "" ? null : Number(input.value)) };
+      return { node: input, get: () => (input.value === "" ? null : Number(input.value)), set: (v) => { input.value = v ?? ""; } };
     }
     case "date": {
       const input = h("input", { class: "input", type: "date", value: value || "" });
-      return { node: input, get: () => input.value || null };
+      return { node: input, get: () => input.value || null, set: (v) => { input.value = v || ""; } };
     }
     default: {
       const input = h("input", { class: "input", type: def.type || "text", value: value || "", placeholder: def.placeholder || "", autocomplete: def.autocomplete || "off" });
-      return { node: input, get: () => input.value.trim() || null };
+      return { node: input, get: () => input.value.trim() || null, set: (v) => { input.value = v ?? ""; } };
     }
   }
 }

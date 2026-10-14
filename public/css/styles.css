@@ -487,6 +487,21 @@ a { color: var(--blue-light); text-decoration: none; }
 .textarea { resize: vertical; min-height: 96px; line-height: 1.6; }
 .select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 34px; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+/* --- widget de VIN (autocompletar la ficha del auto) --- */
+.vin-field {
+  padding: 14px 14px 6px; border-radius: 14px; margin-bottom: 18px;
+  border: 1px dashed var(--line); background: rgba(59, 130, 246, 0.05);
+}
+.vin-row { display: flex; gap: 10px; align-items: stretch; }
+.vin-row .input { flex: 1; }
+.vin-row .btn { flex: 0 0 auto; white-space: nowrap; }
+.vin-status { min-height: 16px; transition: color 0.16s ease; }
+.vin-status.ok { color: var(--blue-light); }
+.vin-status.err { color: #f87171; }
+@media (max-width: 560px) {
+  .vin-row { flex-direction: column; }
+}
 .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(7,10,15,.4); }
 .switch-row .txt b { display: block; font-size: 13.5px; }
