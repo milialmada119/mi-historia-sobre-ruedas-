@@ -12,6 +12,7 @@ const categoryOptions = Object.entries(CATEGORIES).map(([value, def]) => ({ valu
 export async function openCarForm(car = null) {
   const editing = Boolean(car);
   const vin = vinLookup();
+  const carAi = aiCarWidget(car?.id || null);
   return formModal({
     title: editing ? "Editar ficha del auto" : "Sumar un auto a mi historia",
     subtitle: editing
@@ -35,6 +36,7 @@ export async function openCarForm(car = null) {
         name: "sold_date", label: "Fecha en que lo vendí", type: "date", value: car?.sold_date, half: true,
         hint: "Completala solo si ya no está con vos.",
       },
+      { type: "static", node: carAi.node },
       {
         name: "description", label: "Descripción personal", type: "textarea", value: car?.description, rows: 4,
         placeholder: "Qué te gusta de este auto, cómo era, qué te hace sentir al verlo…",
@@ -46,7 +48,7 @@ export async function openCarForm(car = null) {
       { name: "favorite", label: "Auto destacado", type: "switch", value: car?.favorite,
         hint: "Marcalo para tenerlo siempre a mano entre tus favoritos." },
     ],
-    onReady: ({ set }) => vin.wire(set),
+    onReady: ({ get, set }) => { vin.wire(set); carAi.wire({ get, set }); },
     onSubmit: async (values) => {
       if (editing) {
         await api.updateCar(car.id, values);
@@ -216,12 +218,13 @@ export async function openStoryForm(carId, entry = null, presetSection = null) {
 function aiStoryWidget(carId) {
   const status = h("div", { class: "hint ai-status" });
   const assist = h("button", { class: "btn btn-primary btn-sm", type: "button" }, icon("sparkles"), "Ayudame a escribir");
+  const titleBtn = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, icon("tag"), "Sugerir título");
   const undo = h("button", { class: "btn btn-ghost btn-sm", type: "button", style: { display: "none" } },
     icon("refresh"), "Deshacer");
   const node = h("div", { class: "field ai-field" },
     h("label", {}, "Asistente de escritura"),
-    h("div", { class: "ai-row" }, assist, undo),
-    h("div", { class: "hint" }, "La IA puede redactar un borrador o mejorar lo que ya escribiste. Revisá el resultado: la historia es tuya."),
+    h("div", { class: "ai-row" }, assist, titleBtn, undo),
+    h("div", { class: "hint" }, "La IA puede redactar un borrador, mejorar lo que escribiste o proponerte un título. Revisá el resultado: la historia es tuya."),
     status);
 
   let ctrl = null;
@@ -229,17 +232,22 @@ function aiStoryWidget(carId) {
   let available = false;
 
   const say = (text, kind = "") => { status.textContent = text; status.className = `hint ai-status ${kind}`.trim(); };
-  const setBusy = (busy) => {
+  const setBusy = (busy, which = "") => {
     assist.disabled = busy;
-    assist.replaceChildren(icon("sparkles"), busy ? "Pensando…" : "Ayudame a escribir");
+    titleBtn.disabled = busy;
+    assist.replaceChildren(icon("sparkles"), busy && which !== "title" ? "Pensando…" : "Ayudame a escribir");
+    titleBtn.replaceChildren(icon("tag"), busy && which === "title" ? "Pensando…" : "Sugerir título");
+  };
+  const ready = () => {
+    if (!available) { say("El asistente IA no está configurado en este servidor. Agregá MHSR_AI_KEY para activarlo.", "err"); return false; }
+    return Boolean(ctrl);
   };
 
   async function run() {
-    if (!ctrl) return;
-    if (!available) { say("El asistente IA no está configurado en este servidor. Agregá MHSR_AI_KEY para activarlo.", "err"); return; }
+    if (!ready()) return;
     const current = (ctrl.get("body") || "").trim();
     if (current && !window.confirm("La IA va a reemplazar el texto que escribiste. ¿Continuamos? (podés deshacerlo)")) return;
-    setBusy(true);
+    setBusy(true, "story");
     say("Escribiendo…");
     try {
       const data = await api.aiAssist({
@@ -256,7 +264,25 @@ function aiStoryWidget(carId) {
     }
   }
 
+  async function suggestTitle() {
+    if (!ready()) return;
+    setBusy(true, "title");
+    say("Pensando un título…");
+    try {
+      const data = await api.aiAssist({
+        task: "title", car_id: carId, section: ctrl.get("section") || "libre", text: (ctrl.get("body") || "").trim(),
+      });
+      ctrl.set("title", data.text);
+      say(`✓ Título sugerido con ${data.provider} · ${data.model}`, "ok");
+    } catch (err) {
+      say(err.message || "El asistente no pudo responder.", "err");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   assist.addEventListener("click", run);
+  titleBtn.addEventListener("click", suggestTitle);
   undo.addEventListener("click", () => {
     if (previous === null || !ctrl) return;
     ctrl.set("body", previous);
@@ -266,6 +292,73 @@ function aiStoryWidget(carId) {
   });
 
   // ¿Está configurado el asistente en este servidor?
+  api.aiStatus().then((s) => {
+    available = Boolean(s && s.enabled);
+    if (available) say(`Disponible: ${s.provider} · ${s.model}`);
+    else say("El asistente IA no está configurado. Agregá MHSR_AI_KEY en el servidor para activarlo.");
+  }).catch(() => { say("No pudimos consultar el estado del asistente."); });
+
+  return { node, wire: (c) => { ctrl = c; } };
+}
+
+/**
+ * Asistente de IA que redacta la "Descripción personal" del auto a partir de
+ * sus datos, sus modificaciones y sus recuerdos (tarea "summary").
+ */
+function aiCarWidget(carId) {
+  const status = h("div", { class: "hint ai-status" });
+  const button = h("button", { class: "btn btn-primary btn-sm", type: "button" }, icon("sparkles"), "Resumir la ficha con IA");
+  const undo = h("button", { class: "btn btn-ghost btn-sm", type: "button", style: { display: "none" } },
+    icon("refresh"), "Deshacer");
+  const node = h("div", { class: "field ai-field" },
+    h("label", {}, "Redactar con IA"),
+    h("div", { class: "ai-row" }, button, undo),
+    h("div", { class: "hint" }, "La IA escribe una descripción personal a partir de los datos, las modificaciones y los recuerdos de este auto."),
+    status);
+
+  let ctrl = null;
+  let previous = null;
+  let available = false;
+
+  const say = (text, kind = "") => { status.textContent = text; status.className = `hint ai-status ${kind}`.trim(); };
+  const setBusy = (busy) => {
+    button.disabled = busy;
+    button.replaceChildren(icon("sparkles"), busy ? "Escribiendo…" : "Resumir la ficha con IA");
+  };
+
+  async function run() {
+    if (!ctrl) return;
+    if (!available) { say("El asistente IA no está configurado en este servidor. Agregá MHSR_AI_KEY para activarlo.", "err"); return; }
+    const current = (ctrl.get("description") || "").trim();
+    if (current && !window.confirm("La IA va a reemplazar la descripción actual. ¿Continuamos? (podés deshacerlo)")) return;
+    setBusy(true);
+    say("Escribiendo…");
+    try {
+      const data = await api.aiAssist({
+        task: "summary", car_id: carId,
+        brand: ctrl.get("brand"), model: ctrl.get("model"),
+        year: ctrl.get("year"), color: ctrl.get("color"),
+      });
+      previous = current;
+      ctrl.set("description", data.text);
+      undo.style.display = "";
+      say(`✓ Descripción generada con ${data.provider} · ${data.model}`, "ok");
+    } catch (err) {
+      say(err.message || "El asistente no pudo responder.", "err");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  button.addEventListener("click", run);
+  undo.addEventListener("click", () => {
+    if (previous === null || !ctrl) return;
+    ctrl.set("description", previous);
+    previous = null;
+    undo.style.display = "none";
+    say("Texto restaurado.");
+  });
+
   api.aiStatus().then((s) => {
     available = Boolean(s && s.enabled);
     if (available) say(`Disponible: ${s.provider} · ${s.model}`);

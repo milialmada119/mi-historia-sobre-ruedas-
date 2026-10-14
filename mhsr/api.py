@@ -1208,6 +1208,61 @@ def _story_prompt(car, section: str, text: str) -> tuple[str, str]:
     return system, user
 
 
+def _title_prompt(car, section: str, text: str) -> tuple[str, str]:
+    brief = STORY_SECTION_BRIEF.get(section, STORY_SECTION_BRIEF["libre"])
+    system = (
+        "Proponés títulos breves y evocadores para las entradas del diario personal de los autos de una persona. "
+        "Escribís en español rioplatense. Devolvés únicamente el título: sin comillas, sin punto final, "
+        "sin numeración y sin explicaciones, de 3 a 8 palabras."
+    )
+    context = f"El auto es {_car_context(car)}. El recuerdo trata sobre {brief}."
+    if text:
+        user = f"{context}\n\nTexto del recuerdo:\n{text}\n\nProponé un solo título."
+    else:
+        user = f"{context}\n\nTodavía no hay texto; proponé un título posible para esa entrada."
+    return system, user
+
+
+def _summary_prompt(car, conn, fallback: dict) -> tuple[str, str]:
+    system = (
+        "Escribís, en español rioplatense, la descripción personal de un auto dentro del diario de su dueño. "
+        "El tono es cálido, cercano y en primera persona. No inventás hechos que no estén en los datos. "
+        "Devolvés únicamente el texto: sin títulos, sin comillas ni listas."
+    )
+    lines = []
+    if car:
+        lines.append(f"Datos del auto: {_car_context(car)}.")
+        mods = db.rows(conn.execute(
+            "SELECT title, category, date FROM modifications WHERE car_id = ? ORDER BY COALESCE(date, '') ASC",
+            (car["id"],)))
+        if mods:
+            lines.append("Modificaciones registradas: " + "; ".join(
+                (m["title"] or m["category"] or "una modificación") + (f" ({m['date']})" if m["date"] else "")
+                for m in mods) + ".")
+        entries = db.rows(conn.execute(
+            "SELECT section, title, body FROM story_entries WHERE car_id = ? ORDER BY COALESCE(date, '') ASC",
+            (car["id"],)))
+        if entries:
+            lines.append("Recuerdos del diario: " + " | ".join(
+                (e["title"] or STORY_SECTION_BRIEF.get(e["section"], "un recuerdo")) + ": " + (e["body"] or "").strip()[:300]
+                for e in entries) + ".")
+        if not mods and not entries:
+            lines.append("Todavía no hay modificaciones ni recuerdos cargados para este auto.")
+    else:
+        base = " ".join(str(x) for x in (fallback.get("brand"), fallback.get("model")) if x)
+        if base:
+            lines.append(f"Datos del auto: {base}" + (f" ({fallback['year']})" if fallback.get("year") else "") + ".")
+        if fallback.get("color"):
+            lines.append(f"Color: {fallback['color']}.")
+        if not base:
+            lines.append("Todavía no hay datos del auto.")
+    lines.append(
+        "Escribí una descripción personal cálida de 2 o 3 párrafos, en primera persona, que resuma qué significa este auto "
+        "para su dueño y qué vivió con él. No agregues hechos que no estén en la información de arriba. Devolvé solo el texto."
+    )
+    return system, "\n".join(lines)
+
+
 @route("GET", r"/api/ai/status")
 def ai_status(ctx):
     cfg = ai_config()
@@ -1233,11 +1288,26 @@ def ai_assist(ctx):
             car = db.row(ctx.conn.execute("SELECT * FROM cars WHERE id = ? AND user_id = ?", (int(car_id), ctx.user["id"])))
         except (ValueError, TypeError):
             car = None
-    system, user = _story_prompt(car, section, text)
+
+    task = (ctx.body.get("task") or "story").strip()
+    if task == "title":
+        system, user = _title_prompt(car, section, text)
+    elif task == "summary":
+        system, user = _summary_prompt(car, ctx.conn, {
+            "brand": clean(ctx.body.get("brand"), 60),
+            "model": clean(ctx.body.get("model"), 80),
+            "year": clean(str(ctx.body.get("year") or ""), 6),
+            "color": clean(ctx.body.get("color"), 40),
+        })
+    else:
+        task = "story"
+        system, user = _story_prompt(car, section, text)
+
     result = _ai_complete(cfg, system, user)
     if not result:
         raise HttpError(502, "El asistente no devolvió texto. Probá de nuevo.")
-    return {"text": result, "mode": "improve" if text else "draft",
+    return {"text": result, "task": task,
+            "mode": ("improve" if text else "draft") if task == "story" else task,
             "provider": cfg["provider"], "model": cfg["model"]}
 
 

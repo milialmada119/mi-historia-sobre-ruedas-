@@ -18,7 +18,7 @@ Sin dependencias externas: **Python 3.10+ solo con la biblioteca estándar** y J
 - **Recuerdos destacados y "Un recuerdo de hoy"** — revive lo que pasó un día como hoy.
 - **Cuenta personal** — registro e inicio de sesión con contraseña protegida (`scrypt`), sesión por cookie HttpOnly. Tus datos sobreviven al cierre de sesión.
 - **Autocompletar la ficha por VIN** — ingresás el VIN del auto y se completan marca, modelo, año, motor y más, usando la API pública de la NHTSA (sin API key).
-- **Asistente de escritura con IA** — te ayuda a redactar un borrador de cada recuerdo o a mejorar lo que escribiste. Configurable con tu proveedor (OpenAI, Anthropic, Gemini, Groq, OpenRouter u Ollama local); la API key vive solo en el servidor.
+- **Asistente de escritura con IA** — te ayuda a redactar un borrador de cada recuerdo, mejorar lo que escribiste, proponer un título y resumir la ficha del auto. Configurable con tu proveedor (OpenAI, Anthropic, Gemini, Groq, OpenRouter u Ollama local); la API key vive solo en el servidor.
 
 ## Requisitos
 
@@ -48,7 +48,7 @@ En el formulario de un auto, ingresá el VIN (17 caracteres) y el backend consul
 
 ### Asistente de escritura con IA (opcional)
 
-Ayuda a redactar un borrador de cada recuerdo o a mejorar lo que ya escribiste. Se activa definiendo variables de entorno **antes** de arrancar el servidor:
+Te ayuda a **redactar un borrador** de cada recuerdo, **mejorar** lo que ya escribiste, **proponer un título** para el recuerdo y **resumir la ficha** del auto (una descripción personal escrita a partir de sus datos, sus modificaciones y sus recuerdos). Se activa definiendo variables de entorno **antes** de arrancar el servidor:
 
 | Variable | Valores | Default |
 |---|---|---|
