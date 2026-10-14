@@ -76,11 +76,37 @@ MHSR_AI_PROVIDER=ollama MHSR_AI_MODEL=llama3.1 python3 app.py
 
 > **La key nunca viaja al navegador.** El frontend le pide a este backend y el backend habla con el proveedor. Sin `MHSR_AI_KEY` (y sin proveedor local) el asistente aparece desactivado, con un mensaje que explica cómo activarlo.
 
+#### Modelo local con Ollama (sin API key)
+
+Si no querés lidiar con keys, podés correr el asistente con un modelo local. No necesita permisos de administrador:
+
+```bash
+# 1) Bajar y extraer Ollama como usuario (sin sudo)
+mkdir -p ~/.local/ollama
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
+  | tar --zstd -xf - -C ~/.local/ollama
+
+# 2) Levantar el servidor de Ollama y bajar un modelo chico
+export PATH="$HOME/.local/ollama/bin:$PATH"
+ollama serve &                 # deja corriendo en 127.0.0.1:11434
+ollama pull qwen2.5:1.5b
+
+# 3) En .env
+#    MHSR_AI_PROVIDER=ollama
+#    MHSR_AI_MODEL=qwen2.5:1.5b
+#    MHSR_AI_TIMEOUT=120      # en CPU tarda; damos margen
+```
+
+Después arrancá todo junto con `./arrancar.sh` (levanta Ollama si hace falta y luego la app).
+
+> En una PC sin GPU (solo CPU) las respuestas tardan entre ~10 y ~40 s y la calidad es modesta: sirve para probar. Para escribir en serio, una key de nube gratuita (Groq, Gemini) da mucha mejor calidad y velocidad.
+
 ## Estructura
 
 ```
 .
 ├── app.py                # Servidor HTTP (http.server) + rutas estáticas y API
+├── arrancar.sh           # Arranca la app (y Ollama si está instalado)
 ├── .env.example          # Plantilla de variables de entorno (IA) — copiar a .env
 ├── mhsr/
 │   ├── api.py            # Endpoints REST (autos, fotos, mods, diario, stats…)
