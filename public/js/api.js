@@ -63,4 +63,8 @@ export const api = {
 
   // Servicios externos
   decodeVin: (vin) => request(`/api/vin?vin=${encodeURIComponent(vin)}`),
+
+  // Asistente de escritura con IA
+  aiStatus: () => request("/api/ai/status"),
+  aiAssist: (data) => request("/api/ai/assist", { method: "POST", body: data }),
 };

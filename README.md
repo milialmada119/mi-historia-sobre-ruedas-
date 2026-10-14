@@ -17,6 +17,8 @@ Sin dependencias externas: **Python 3.10+ solo con la biblioteca estándar** y J
 - **Estadísticas** — total de autos, actuales, vendidos, primer vehículo, conteos de modificaciones/recuerdos/fotos, marca más repetida, categorías favoritas.
 - **Recuerdos destacados y "Un recuerdo de hoy"** — revive lo que pasó un día como hoy.
 - **Cuenta personal** — registro e inicio de sesión con contraseña protegida (`scrypt`), sesión por cookie HttpOnly. Tus datos sobreviven al cierre de sesión.
+- **Autocompletar la ficha por VIN** — ingresás el VIN del auto y se completan marca, modelo, año, motor y más, usando la API pública de la NHTSA (sin API key).
+- **Asistente de escritura con IA** — te ayuda a redactar un borrador de cada recuerdo o a mejorar lo que escribiste. Configurable con tu proveedor (OpenAI, Anthropic, Gemini, Groq, OpenRouter u Ollama local); la API key vive solo en el servidor.
 
 ## Requisitos
 
@@ -37,6 +39,40 @@ python3 app.py --host 0.0.0.0  # accesible desde la red local
 ```
 
 Abrí la URL que imprime en la terminal, creá tu cuenta y empezá a cargar tu primer auto. 🏁
+
+## Integraciones
+
+### Ficha del auto por VIN (sin API key)
+
+En el formulario de un auto, ingresá el VIN (17 caracteres) y el backend consulta la API pública de la [NHTSA vPIC](https://vpic.nhtsa.dot.gov/api/) para completar marca, modelo, año, carrocería, motor y combustible. No requiere configuración ni key. La consulta externa la hace el servidor, no el navegador.
+
+### Asistente de escritura con IA (opcional)
+
+Ayuda a redactar un borrador de cada recuerdo o a mejorar lo que ya escribiste. Se activa definiendo variables de entorno **antes** de arrancar el servidor:
+
+| Variable | Valores | Default |
+|---|---|---|
+| `MHSR_AI_PROVIDER` | `openai` · `groq` · `openrouter` · `anthropic` · `gemini` · `ollama` | `openai` |
+| `MHSR_AI_KEY` | tu API key del proveedor | — |
+| `MHSR_AI_MODEL` | modelo a usar | según proveedor |
+| `MHSR_AI_URL` | URL base alternativa (OpenAI-compatible local, etc.) | según proveedor |
+| `MHSR_AI_TIMEOUT` | segundos de espera | `40` |
+
+```bash
+# OpenAI
+MHSR_AI_PROVIDER=openai MHSR_AI_KEY=sk-... python3 app.py
+
+# Anthropic
+MHSR_AI_PROVIDER=anthropic MHSR_AI_KEY=sk-ant-... python3 app.py
+
+# Gemini
+MHSR_AI_PROVIDER=gemini MHSR_AI_KEY=AIza... python3 app.py
+
+# Ollama local (sin key)
+MHSR_AI_PROVIDER=ollama MHSR_AI_MODEL=llama3.1 python3 app.py
+```
+
+> **La key nunca viaja al navegador.** El frontend le pide a este backend y el backend habla con el proveedor. Sin `MHSR_AI_KEY` (y sin proveedor local) el asistente aparece desactivado, con un mensaje que explica cómo activarlo.
 
 ## Estructura
 
@@ -74,6 +110,7 @@ data/
 - Sesiones con token aleatorio opaco en cookie `HttpOnly; SameSite=Lax`.
 - Límite de 24 MB por request; las imágenes se redimensionan a ≤1800 px (JPEG ~0.86) en el navegador antes de subirlas.
 - Toda mutación exige sesión activa (401 en caso contrario).
+- Las API keys de IA se leen de variables de entorno y quedan **solo en el servidor**; el navegador nunca las recibe.
 
 ---
 

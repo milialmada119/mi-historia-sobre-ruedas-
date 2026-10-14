@@ -1051,6 +1051,197 @@ def decode_vin(ctx):
 
 
 # --------------------------------------------------------------------------- #
+#  Asistente de escritura con IA (proveedor configurable por variables de entorno)
+# --------------------------------------------------------------------------- #
+#  Variables:
+#    MHSR_AI_PROVIDER  openai | groq | openrouter | anthropic | gemini | ollama   (def: openai)
+#    MHSR_AI_KEY       la API key del proveedor (no hace falta para ollama/local)
+#    MHSR_AI_MODEL     modelo a usar (si no, se elige un default por proveedor)
+#    MHSR_AI_URL       URL base alternativa (para OpenAI-compatible local, etc.)
+#    MHSR_AI_TIMEOUT   segundos de espera (def: 40)
+#
+#  La key vive SOLO en el servidor. El navegador nunca la ve: pide a nuestro
+#  backend y el backend hace la llamada externa.
+
+AI_PROVIDER = os.environ.get("MHSR_AI_PROVIDER", "").strip().lower()
+AI_KEY = os.environ.get("MHSR_AI_KEY", "").strip()
+AI_MODEL = os.environ.get("MHSR_AI_MODEL", "").strip()
+AI_URL = os.environ.get("MHSR_AI_URL", "").strip().rstrip("/")
+try:
+    AI_TIMEOUT = float(os.environ.get("MHSR_AI_TIMEOUT", "40"))
+except ValueError:
+    AI_TIMEOUT = 40.0
+
+AI_PROVIDERS = {
+    "openai":     {"model": "gpt-4o-mini",             "base": "https://api.openai.com/v1"},
+    "groq":       {"model": "llama-3.1-8b-instant",     "base": "https://api.groq.com/openai/v1"},
+    "openrouter": {"model": "openai/gpt-4o-mini",       "base": "https://openrouter.ai/api/v1"},
+    "anthropic":  {"model": "claude-3-5-haiku-latest",  "base": "https://api.anthropic.com/v1"},
+    "gemini":     {"model": "gemini-1.5-flash",         "base": "https://generativelanguage.googleapis.com/v1beta"},
+    "ollama":     {"model": "llama3.1",                 "base": "http://localhost:11434/v1"},
+}
+_LOCAL_HINTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal")
+
+STORY_SECTION_BRIEF = {
+    "origen": "cómo y cuándo llegó el auto a su vida, si fue su primer auto, una herencia o una oportunidad",
+    "primera_modificacion": "qué fue lo primero que le cambió y qué sintió al verlo terminado",
+    "mejores_recuerdos": "viajes, encuentros y momentos especiales vividos arriba de ese auto",
+    "significado": "qué etapa de su vida representa ese auto y por qué fue importante",
+    "despedida": "qué sintió al despedirse del auto, las últimas palabras para él",
+    "libre": "lo que quiera recordar de ese auto",
+}
+
+
+def ai_config() -> dict:
+    provider = AI_PROVIDER or "openai"
+    if provider not in AI_PROVIDERS:
+        provider = "openai"
+    defaults = AI_PROVIDERS[provider]
+    base = AI_URL or defaults["base"]
+    model = AI_MODEL or defaults["model"]
+    needs_key = "ollama" not in provider and not any(h in base for h in _LOCAL_HINTS)
+    enabled = bool(AI_KEY) or not needs_key
+    return {"provider": provider, "model": model, "base": base, "enabled": enabled}
+
+
+def _ai_post(url: str, payload: dict, headers: dict) -> dict:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", **headers}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as err:
+        detail = ""
+        try:
+            parsed = json.loads(err.read().decode("utf-8", "replace"))
+            detail = (parsed.get("error") or {}).get("message", "") if isinstance(parsed.get("error"), dict) else str(parsed.get("error") or "")
+        except Exception:  # noqa: BLE001
+            detail = ""
+        if err.code in (401, 403):
+            raise HttpError(502, "El proveedor de IA rechazó la credencial. Revisá MHSR_AI_KEY.")
+        if err.code == 429:
+            raise HttpError(429, "El proveedor de IA limitó las peticiones por ahora. Probá en un rato.")
+        raise HttpError(502, f"El proveedor de IA devolvió un error ({err.code}). {detail}".strip())
+    except socket.timeout:
+        raise HttpError(504, "El asistente tardó demasiado en responder. Probá de nuevo.")
+    except (urllib.error.URLError, ValueError, OSError):
+        raise HttpError(502, "No pudimos contactar al proveedor de IA.")
+
+
+def _ai_complete(cfg: dict, system: str, user: str) -> str:
+    provider, model, base = cfg["provider"], cfg["model"], cfg["base"]
+    if provider == "anthropic":
+        data = _ai_post(
+            f"{base}/messages",
+            {"model": model, "max_tokens": 1024, "system": system, "messages": [{"role": "user", "content": user}]},
+            {"x-api-key": AI_KEY, "anthropic-version": "2023-06-01"},
+        )
+        parts = data.get("content") or []
+        return "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+    if provider == "gemini":
+        data = _ai_post(
+            f"{base}/models/{model}:generateContent?key={AI_KEY}",
+            {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user}]}],
+                "generationConfig": {"temperature": 0.9, "maxOutputTokens": 1024},
+            },
+            {},
+        )
+        candidates = data.get("candidates") or []
+        if not candidates:
+            return ""
+        chunks = (candidates[0].get("content") or {}).get("parts") or []
+        return "".join(p.get("text", "") for p in chunks if isinstance(p, dict)).strip()
+    # openai-compatible (openai, groq, openrouter, ollama, LM Studio, etc.)
+    headers = {"Authorization": f"Bearer {AI_KEY}"} if AI_KEY else {}
+    data = _ai_post(
+        f"{base}/chat/completions",
+        {"model": model, "temperature": 0.9, "max_tokens": 1024,
+         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
+        headers,
+    )
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    return (choices[0].get("message") or {}).get("content", "").strip()
+
+
+def _car_context(car) -> str:
+    if not car:
+        return "el auto del que habla"
+    label = " ".join(str(x) for x in (car["brand"], car["model"]) if x)
+    if car["year"]:
+        label += f" ({car['year']})"
+    if car["nickname"]:
+        label = f"{car['nickname']} — {label}"
+    extra = []
+    if car["color"]:
+        extra.append(f"color {car['color']}")
+    if car["description"]:
+        extra.append(f"descrito por su dueño como «{car['description']}»")
+    return label + (", " + "; ".join(extra) if extra else "")
+
+
+def _story_prompt(car, section: str, text: str) -> tuple[str, str]:
+    brief = STORY_SECTION_BRIEF.get(section, STORY_SECTION_BRIEF["libre"])
+    system = (
+        "Escribís, en español rioplatense, el diario personal de los autos de una persona. "
+        "Tu tono es cálido, cercano y humano, siempre en primera persona, como si el dueño lo contara. "
+        "No inventás hechos que la persona no haya mencionado. "
+        "Devolvés únicamente el texto del recuerdo: sin títulos, sin comillas, sin listas y sin explicaciones."
+    )
+    context = f"El auto es {_car_context(car)}."
+    if text:
+        user = (
+            f"{context} Mejorá la redacción del siguiente texto para la sección «{brief}». "
+            "Mantené la voz y el tono del autor y conservá TODOS sus datos; no agregues hechos nuevos. "
+            "Corregí gramática y ortografía y hacelo fluir mejor. Devolvé solo el texto mejorado.\n\n"
+            f"Texto original:\n{text}"
+        )
+    else:
+        user = (
+            f"{context} Escribí un borrador cálido de 2 o 3 párrafos para la sección de su historia sobre {brief}. "
+            "No inventés datos concretos (nombres, fechas, lugares): usá un tono evocador y dejá que la persona "
+            "complete con sus propios recuerdos. Devolvé solo el texto."
+        )
+    return system, user
+
+
+@route("GET", r"/api/ai/status")
+def ai_status(ctx):
+    cfg = ai_config()
+    return {"enabled": cfg["enabled"], "provider": cfg["provider"], "model": cfg["model"]}
+
+
+@route("POST", r"/api/ai/assist")
+def ai_assist(ctx):
+    cfg = ai_config()
+    if not cfg["enabled"]:
+        raise HttpError(
+            503,
+            "El asistente de IA no está configurado. Definí MHSR_AI_KEY (y MHSR_AI_PROVIDER si no usás OpenAI) en el servidor.",
+        )
+    section = (ctx.body.get("section") or "libre").strip()
+    text = (ctx.body.get("text") or "").strip()
+    if len(text) > 8000:
+        raise HttpError(413, "El texto es demasiado largo para el asistente.")
+    car = None
+    car_id = ctx.body.get("car_id")
+    if car_id not in (None, ""):
+        try:
+            car = db.row(ctx.conn.execute("SELECT * FROM cars WHERE id = ? AND user_id = ?", (int(car_id), ctx.user["id"])))
+        except (ValueError, TypeError):
+            car = None
+    system, user = _story_prompt(car, section, text)
+    result = _ai_complete(cfg, system, user)
+    if not result:
+        raise HttpError(502, "El asistente no devolvió texto. Probá de nuevo.")
+    return {"text": result, "mode": "improve" if text else "draft",
+            "provider": cfg["provider"], "model": cfg["model"]}
+
+
+# --------------------------------------------------------------------------- #
 #  Contexto de petición y helpers de propiedad
 # --------------------------------------------------------------------------- #
 

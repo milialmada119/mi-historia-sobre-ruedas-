@@ -170,6 +170,7 @@ async function syncModPhotos(mod, original, next, kind) {
 export async function openStoryForm(carId, entry = null, presetSection = null) {
   const editing = Boolean(entry);
   const section = entry?.section || presetSection || "libre";
+  const ai = aiStoryWidget(carId);
   return formModal({
     title: editing ? "Editar este recuerdo" : "Escribir un recuerdo",
     subtitle: "Un diario personal: escribí con libertad, con tus palabras, como si le contaras la historia a alguien.",
@@ -184,12 +185,14 @@ export async function openStoryForm(carId, entry = null, presetSection = null) {
       { name: "date", label: "Fecha del recuerdo", type: "date", value: entry?.date, half: true },
       { name: "featured", label: "Recuerdo destacado", type: "switch", value: entry?.featured, half: false,
         hint: "Lo vas a ver en «Recuerdos destacados» y en «Un recuerdo de hoy»." },
+      { type: "static", node: ai.node },
       {
         name: "body", label: "Contalo con tus palabras", type: "textarea", value: entry?.body, rows: 8,
         placeholder: sectionPrompt(section),
       },
       { name: "photos", label: "Fotos de este recuerdo", type: "photos", value: (entry?.photos || []).map((p) => p.path) },
     ],
+    onReady: ({ get, set }) => ai.wire({ get, set }),
     onSubmit: async (values) => {
       const payload = { ...values, photos: values.photos || [] };
       if (editing) {
@@ -203,6 +206,73 @@ export async function openStoryForm(carId, entry = null, presetSection = null) {
       refresh();
     },
   });
+}
+
+/**
+ * Asistente de escritura con IA para los recuerdos.
+ * El navegador pide a nuestro backend; el backend (con la API key en el entorno)
+ * habla con el proveedor elegido.
+ */
+function aiStoryWidget(carId) {
+  const status = h("div", { class: "hint ai-status" });
+  const assist = h("button", { class: "btn btn-primary btn-sm", type: "button" }, icon("sparkles"), "Ayudame a escribir");
+  const undo = h("button", { class: "btn btn-ghost btn-sm", type: "button", style: { display: "none" } },
+    icon("refresh"), "Deshacer");
+  const node = h("div", { class: "field ai-field" },
+    h("label", {}, "Asistente de escritura"),
+    h("div", { class: "ai-row" }, assist, undo),
+    h("div", { class: "hint" }, "La IA puede redactar un borrador o mejorar lo que ya escribiste. Revisá el resultado: la historia es tuya."),
+    status);
+
+  let ctrl = null;
+  let previous = null;
+  let available = false;
+
+  const say = (text, kind = "") => { status.textContent = text; status.className = `hint ai-status ${kind}`.trim(); };
+  const setBusy = (busy) => {
+    assist.disabled = busy;
+    assist.replaceChildren(icon("sparkles"), busy ? "Pensando…" : "Ayudame a escribir");
+  };
+
+  async function run() {
+    if (!ctrl) return;
+    if (!available) { say("El asistente IA no está configurado en este servidor. Agregá MHSR_AI_KEY para activarlo.", "err"); return; }
+    const current = (ctrl.get("body") || "").trim();
+    if (current && !window.confirm("La IA va a reemplazar el texto que escribiste. ¿Continuamos? (podés deshacerlo)")) return;
+    setBusy(true);
+    say("Escribiendo…");
+    try {
+      const data = await api.aiAssist({
+        task: "story", car_id: carId, section: ctrl.get("section") || "libre", text: current,
+      });
+      previous = current;
+      ctrl.set("body", data.text);
+      undo.style.display = "";
+      say(`✓ ${data.mode === "improve" ? "Texto mejorado" : "Borrador listo"} con ${data.provider} · ${data.model}`, "ok");
+    } catch (err) {
+      say(err.message || "El asistente no pudo responder.", "err");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  assist.addEventListener("click", run);
+  undo.addEventListener("click", () => {
+    if (previous === null || !ctrl) return;
+    ctrl.set("body", previous);
+    previous = null;
+    undo.style.display = "none";
+    say("Texto restaurado.");
+  });
+
+  // ¿Está configurado el asistente en este servidor?
+  api.aiStatus().then((s) => {
+    available = Boolean(s && s.enabled);
+    if (available) say(`Disponible: ${s.provider} · ${s.model}`);
+    else say("El asistente IA no está configurado. Agregá MHSR_AI_KEY en el servidor para activarlo.");
+  }).catch(() => { say("No pudimos consultar el estado del asistente."); });
+
+  return { node, wire: (c) => { ctrl = c; } };
 }
 
 async function syncStoryPhotos(entry, next) {
