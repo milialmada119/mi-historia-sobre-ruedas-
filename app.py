@@ -18,9 +18,44 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from mhsr import api, auth, db
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_env(path: str) -> None:
+    """Carga variables desde un archivo .env simple (sin dependencias).
+
+    Formato: líneas ``CLAVE=valor``. Se ignoran las líneas vacías y las que
+    empiezan con ``#``. Las variables que ya existen en el entorno tienen
+    prioridad (el .env nunca las pisa). Sirve, por ejemplo, para dejar la API
+    key de la IA en un archivo local que no se versiona.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+# Cargamos .env ANTES de importar mhsr: la configuración de IA se lee al importar.
+_load_env(os.path.join(BASE_DIR, ".env"))
+
+from mhsr import api, auth, db  # noqa: E402  (debe ir tras cargar el .env)
+
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 COOKIE_NAME = "mhsr_session"
 MAX_BODY = 24 * 1024 * 1024  # 24 MB (imágenes ya redimensionadas en el navegador)

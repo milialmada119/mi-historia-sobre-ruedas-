@@ -58,6 +58,8 @@ Te ayuda a **redactar un borrador** de cada recuerdo, **mejorar** lo que ya escr
 | `MHSR_AI_URL` | URL base alternativa (OpenAI-compatible local, etc.) | según proveedor |
 | `MHSR_AI_TIMEOUT` | segundos de espera | `40` |
 
+> **Alternativa recomendada:** en vez de pasar todo por la línea de comandos, copiá `.env.example` a `.env` (`cp .env.example .env`), completá la key ahí y arrancá normal con `python3 app.py`. El servidor lee `.env` al iniciar (lo que ya exista en el entorno pisa al archivo) y ese archivo **no se versiona**. Así no repetís la key en cada arranque ni queda en el historial de la shell.
+
 ```bash
 # OpenAI
 MHSR_AI_PROVIDER=openai MHSR_AI_KEY=sk-... python3 app.py
@@ -79,6 +81,7 @@ MHSR_AI_PROVIDER=ollama MHSR_AI_MODEL=llama3.1 python3 app.py
 ```
 .
 ├── app.py                # Servidor HTTP (http.server) + rutas estáticas y API
+├── .env.example          # Plantilla de variables de entorno (IA) — copiar a .env
 ├── mhsr/
 │   ├── api.py            # Endpoints REST (autos, fotos, mods, diario, stats…)
 │   ├── auth.py           # Hashing scrypt + tokens de sesión

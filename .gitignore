@@ -1,6 +1,9 @@
 # Datos locales (BD SQLite + fotos subidas) — no se versionan
 data/
 
+# Secretos locales (API keys de IA, etc.) — no se versionan
+.env
+
 # Caché de Python
 __pycache__/
 *.pyc
